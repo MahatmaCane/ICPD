@@ -1,6 +1,7 @@
 #!usr/bin/python
 
 import argparse
+import logging
 import openpyxl
 import os
 import re
@@ -8,12 +9,42 @@ import re
 from openpyxl.styles import (Alignment, Color, fills, PatternFill)
 
 
+class Course:
+
+    def __init__(self):
+        self.abbrev = None
+        self.name = None
+        self.tutor = None
+        self.location = None
+        self.count = 0
+        self.count_to_method = {0:self.set_abbrev, 1:self.set_name,
+                              2:self.set_tutor, 3:self.set_location}
+
+    def record(self, entry):
+        self.count_to_method[self.count](entry)
+
+    def set_abbrev(self, abbrev):
+        self.abbrev = abbrev
+        self.count += 1
+
+    def set_name(self, name):
+        self.name = name
+        self.count += 1
+
+    def set_tutor(self, tutor):
+        self.tutor = tutor
+        self.count += 1
+
+    def set_location(self, loc):
+        self.location = loc
+        self.count += 1
+
 def fuck_timetable(args):
 
     """Assumes info box in top RH corner is bounded on L & R side
     by cells containing only the word CUT and END_CUT, respectively."""
 
-    course_abbrevs = dict()
+    course_list = dict()
     in_cut = False
 
     sheet_number = args.year
@@ -29,21 +60,28 @@ def fuck_timetable(args):
             if not isinstance(cell.value, basestring):
                 continue
 
-            cell_contains = {val.strip('[( )]') for val in cell.value.split()}
+            cell_contains = {val.strip('([ ])') for val in cell.value.split()}
             if 'CUT' in cell_contains:
                 in_cut = True
                 cell.value = None
+                course = Course()
                 continue
             if 'END_CUT' in cell_contains:
                 in_cut = False
                 cell.value = None
+                course_list[course.abbrev] = course
                 continue
-            if any(['Week' in cell_contains, in_cut, 'Time' in cell_contains,
+            if any(['Week' in cell_contains, 'Time' in cell_contains,
                     'Mon' in cell_contains, 'Tues' in cell_contains,
                     'Wed' in cell_contains, 'Thur' in cell_contains,
                     'Fri' in cell_contains,
                     re.search('[0-9]+\-[0-9]+', cell.value)]):
                 continue
+            if in_cut:
+               derryck.info('Recording {0}'.format(cell.value))
+               course.record(cell.value)
+               continue
+
             if not isinstance(args.courses, list):
                 courses = set([unicode(args.courses)])
             courses = set(unicode(course) for course in args.courses)
@@ -57,8 +95,14 @@ def fuck_timetable(args):
                                     fgColor=Color('FFFFFF'))
 
     timetable.save(os.path.abspath(args.path))
+    derryck.info(course_list)
+    return course_list
 
 if __name__ == '__main__':
+
+    derryck = logging.getLogger('Derryck')
+    derryck.addHandler(logging.StreamHandler())
+    derryck.setLevel(logging.INFO)
 
     desc_str = """Removes all but specified courses from Derryck-issued
                   timetables, doing so on a row-by-row basis. Cells in a given
@@ -71,4 +115,4 @@ if __name__ == '__main__':
     parser.add_argument('--courses', '-c', metavar='C', nargs='+',
                         help='Relevant courses (abbrevs).')
     args = parser.parse_args()
-    fuck_timetable(args)
+    course_list = fuck_timetable(args)
