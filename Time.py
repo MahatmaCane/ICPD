@@ -60,7 +60,8 @@ def fuck_timetable(args):
             if not isinstance(cell.value, basestring):
                 continue
 
-            cell_contains = {val.strip('([ ])') for val in cell.value.split()}
+            cell_contains = {val.strip(' ') for val in cell.value.split()}
+            # Parse RH corner box for course names, abbrevs and locations
             if 'CUT' in cell_contains:
                 in_cut = True
                 cell.value = None
@@ -71,21 +72,35 @@ def fuck_timetable(args):
                 cell.value = None
                 course_list[course.abbrev] = course
                 continue
+            if in_cut:
+                derryck.info('Recording {0}'.format(cell.value))
+                course.record(cell.value)
+                continue
+            # Ignore column titles
             if any(['Week' in cell_contains, 'Time' in cell_contains,
                     'Mon' in cell_contains, 'Tues' in cell_contains,
                     'Wed' in cell_contains, 'Thur' in cell_contains,
-                    'Fri' in cell_contains,
-                    re.search('[0-9]+\-[0-9]+', cell.value)]):
+                    'Fri' in cell_contains]):
                 continue
-            if in_cut:
-               derryck.info('Recording {0}'.format(cell.value))
-               course.record(cell.value)
-               continue
+            # Adjust formatting for time
+            if re.search('[0-9]+\-[0-9]+', cell.value):
+                start_time = cell.value.strip(' ="').split('-')[0]
+                if start_time.startswith('0'):
+                    start_time = start_time[1:]
+                elif start_time[0].isalpha():
+                    continue
+                elif int(start_time) < 9:
+                    start_time = str(int(start_time)+12)
+                start_time += ':00'
+                cell.value = start_time
+                continue
 
             if not isinstance(args.courses, list):
                 courses = set([unicode(args.courses)])
-            courses = set(unicode(course) for course in args.courses)
-            courses_in_cell = courses.intersection(cell_contains)
+            else:
+                courses = set(unicode(course) for course in args.courses)
+            courses_in_cell = {item for item in cell_contains if 
+                               item.strip('()[]') in courses}
             if len(courses_in_cell) > 0:
                 cell.value = ' '.join(courses_in_cell)
                 cell.alignment = Alignment(horizontal='center')
