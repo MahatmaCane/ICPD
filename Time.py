@@ -58,6 +58,8 @@ def fuck_timetable(args):
         for cell in row:
 
             if not isinstance(cell.value, basestring):
+                if cell.value is not None:
+                    derryck.warn('NOT BASESTRING: {0}'.format(cell.value))
                 continue
 
             cell_contains = {val.strip(' ') for val in cell.value.split()}
@@ -117,7 +119,7 @@ if __name__ == '__main__':
 
     derryck = logging.getLogger('Derryck')
     derryck.addHandler(logging.StreamHandler())
-    derryck.setLevel(logging.INFO)
+    
 
     desc_str = """Removes all but specified courses from Derryck-issued
                   timetables, doing so on a row-by-row basis. Cells in a given
@@ -129,5 +131,12 @@ if __name__ == '__main__':
     parser.add_argument('year', type=int, help='Year of study.')
     parser.add_argument('--courses', '-c', metavar='C', nargs='+',
                         help='Relevant courses (abbrevs).')
+    parser.add_argument('--verbose', '-v', action='store_true')
     args = parser.parse_args()
+    
+    log_level = logging.WARN
+    if args.verbose:
+        log_level = logging.INFO
+    derryck.setLevel(log_level)
+
     course_list = fuck_timetable(args)
