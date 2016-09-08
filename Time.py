@@ -1,6 +1,7 @@
 #!usr/bin/python
 
 import argparse
+import datetime
 import logging
 import openpyxl
 import os
@@ -39,6 +40,17 @@ class Course:
         self.location = loc
         self.count += 1
 
+class Lecture:
+
+    def __init__(self, course, date, time):
+        self.course = course
+        self.date = date
+        self.time = time
+
+    def __repr__(self):
+        return 'Lecture({0}, {1}, {2})'.format(self.course, self.date,
+                                               self.time)
+
 def fuck_timetable(args):
 
     """Assumes info box in top RH corner is bounded on L & R side
@@ -59,19 +71,17 @@ def fuck_timetable(args):
 
             if not isinstance(cell.value, basestring):
                 if cell.value is not None:
-                    derryck.warn('NOT BASESTRING: {0}'.format(cell.value))
+                    derryck.debug('NOT BASESTRING: {0}'.format(cell.value))
                 continue
 
             cell_contains = {val.strip(' ') for val in cell.value.split()}
             # Parse RH corner box for course names, abbrevs and locations
             if 'CUT' in cell_contains:
                 in_cut = True
-                cell.value = None
                 course = Course()
                 continue
             if 'END_CUT' in cell_contains:
                 in_cut = False
-                cell.value = None
                 course_list[course.abbrev] = course
                 continue
             if in_cut:
@@ -115,6 +125,63 @@ def fuck_timetable(args):
     derryck.info(course_list)
     return course_list
 
+def move_to_iCal(course_list, args):
+
+    sheet_number = args.year
+    if sheet_number == 4:
+        sheet_number = 3
+
+    timetable = openpyxl.load_workbook(os.path.abspath(args.path))
+    year_sheet = timetable[timetable.get_sheet_names()[sheet_number-1]]
+
+    in_cut = False
+
+    for row in year_sheet:
+        for cell in row:
+            
+            if cell.value is None:
+                continue
+            try:
+                cell_contains = {val.strip(' ') for val in cell.value.split()}
+            except AttributeError:
+                cell_contains = []
+            if 'CUT' in cell_contains:
+                in_cut = True
+                cell.value = None
+                continue
+            if 'END_CUT' in cell_contains:
+                in_cut = False
+                cell.value = None
+                continue
+            if in_cut:
+                continue
+            # Ignore column titles
+            if any(['Week' in cell_contains, 'Time' in cell_contains,
+                    'Mon' in cell_contains, 'Tues' in cell_contains,
+                    'Wed' in cell_contains, 'Thur' in cell_contains,
+                    'Fri' in cell_contains]):
+                continue
+            # Obtain date and lecture start time
+            if isinstance(cell.value, datetime.datetime):
+                derryck.debug('Date: {0}'.format(cell.value))
+                current_date = cell.value
+                continue
+            elif re.search('[0-9]+\:00', cell.value):
+                derryck.debug('Time: {0}'.format(cell.value))
+                start_time = cell.value.strip(' ="') + ':00'
+                current_time = cell.value 
+            
+            # Look for lectures
+            courses_in_cell = {item for item in cell_contains if
+                               item in args.courses}
+            # There should only be one item in that set but written
+            # here for the case of multiple items
+            for lecture in courses_in_cell:
+                lecture = Lecture(lecture, current_date, current_time)
+                derryck.info('Creating lecture {0}'.format(lecture))
+                # Populate applescript template/pass these values to
+                # applescript
+
 if __name__ == '__main__':
 
     derryck = logging.getLogger('Derryck')
@@ -136,7 +203,8 @@ if __name__ == '__main__':
     
     log_level = logging.WARN
     if args.verbose:
-        log_level = logging.INFO
+        log_level = logging.DEBUG
     derryck.setLevel(log_level)
 
     course_list = fuck_timetable(args)
+    move_to_iCal(course_list, args)
