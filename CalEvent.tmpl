@@ -1,0 +1,8 @@
+tell application "Calendar"
+	if not (exists calendar "Year {{ year }} Lectures") then
+		create calendar with name "Year {{ year }} Lectures"
+	end if
+	tell calendar "Year {{ year }} Lectures"
+		make new event with properties {description:"{{ name }}", summary:"{{ abbrev }}", start date:date "{{ date }}0", start time:"{{ time }}" location:"{{ location }}"}
+	end tell
+end tell

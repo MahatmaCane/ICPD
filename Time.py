@@ -6,7 +6,9 @@ import logging
 import openpyxl
 import os
 import re
+import subprocess
 
+from jinja2 import Environment, FileSystemLoader
 from openpyxl.styles import (Alignment, Color, fills, PatternFill)
 
 
@@ -42,29 +44,32 @@ class Course:
 
 class Lecture:
 
-    def __init__(self, course, date, time):
-        self.course = course
+    def __init__(self, course, date, time, year):
+        self.abbrev = course
         self.date = date
         self.time = time
+        self.year = year
+
+    def set_location(self, loc):
+        self.location = loc
+
+    def set_name(self, name):
+        self.name = name
 
     def __repr__(self):
-        return 'Lecture({0}, {1}, {2})'.format(self.course, self.date,
-                                               self.time)
+        properties = [self.abbrev, self.date, self.time, self.year]
+        return 'Lecture({0}, {1}, {2}, Year {3})'.format(*properties)
 
-def fuck_timetable(args):
+def fuck_timetable(year_sheet, args):
 
-    """Assumes info box in top RH corner is bounded on L & R side
-    by cells containing only the word CUT and END_CUT, respectively."""
+    """Removes irrelevant courses, changes time format and parses top RH
+    corner description. 
+    
+    Assumes info box in top RH corner is bounded on L & R side by cells
+    containing only the word CUT and END_CUT, respectively."""
 
     course_list = dict()
     in_cut = False
-
-    sheet_number = args.year
-    if sheet_number == 4:
-        sheet_number = 3
-
-    timetable = openpyxl.load_workbook(os.path.abspath(args.path))
-    year_sheet = timetable[timetable.get_sheet_names()[sheet_number-1]]
 
     for row in year_sheet:
         for cell in row:
@@ -99,8 +104,10 @@ def fuck_timetable(args):
                 start_time = cell.value.strip(' ="').split('-')[0]
                 if start_time.startswith('0'):
                     start_time = start_time[1:]
+                # Check that it is a pure numeric value
                 elif start_time[0].isalpha():
                     continue
+                # 24-hour format
                 elif int(start_time) < 9:
                     start_time = str(int(start_time)+12)
                 start_time += ':00'
@@ -125,14 +132,10 @@ def fuck_timetable(args):
     derryck.info(course_list)
     return course_list
 
-def move_to_iCal(course_list, args):
+def move_to_iCal(year_sheet, template, course_list, args):
 
-    sheet_number = args.year
-    if sheet_number == 4:
-        sheet_number = 3
-
-    timetable = openpyxl.load_workbook(os.path.abspath(args.path))
-    year_sheet = timetable[timetable.get_sheet_names()[sheet_number-1]]
+    """Runs through sheet again and creates iCal events if cell value
+    encountered."""
 
     in_cut = False
 
@@ -141,10 +144,14 @@ def move_to_iCal(course_list, args):
             
             if cell.value is None:
                 continue
+            
             try:
                 cell_contains = {val.strip(' ') for val in cell.value.split()}
+            # Some entries will not have a split method. Don't want to convert
+            # these to strings
             except AttributeError:
                 cell_contains = []
+            
             if 'CUT' in cell_contains:
                 in_cut = True
                 cell.value = None
@@ -161,41 +168,46 @@ def move_to_iCal(course_list, args):
                     'Wed' in cell_contains, 'Thur' in cell_contains,
                     'Fri' in cell_contains]):
                 continue
+
             # Obtain date and lecture start time
             if isinstance(cell.value, datetime.datetime):
-                derryck.debug('Date: {0}'.format(cell.value))
-                current_date = cell.value
+                lec_date = cell.value
                 continue
             elif re.search('[0-9]+\:00', cell.value):
-                derryck.debug('Time: {0}'.format(cell.value))
                 start_time = cell.value.strip(' ="') + ':00'
-                current_time = cell.value 
+                lec_time = cell.value 
             
             # Look for lectures
             courses_in_cell = {item for item in cell_contains if
-                               item in args.courses}
+                               item.strip('()[]') in args.courses}
             # There should only be one item in that set but written
             # here for the case of multiple items
             for lecture in courses_in_cell:
-                lecture = Lecture(lecture, current_date, current_time)
+                lecture = Lecture(lecture, lec_date, lec_time, args.year)
+                lecture.set_name(course_list[lecture.abbrev.strip('[]')].name)
+                lecture.set_location(course_list[lecture.abbrev.strip('[]')].location)
                 derryck.info('Creating lecture {0}'.format(lecture))
                 # Populate applescript template/pass these values to
                 # applescript
+                with open('tmpCalEventScript.scpt', 'w') as fh:
+                    fh.write(template.render(lecture.__dict__))
+                    subprocess.call(['osascript', fh.name])
 
 if __name__ == '__main__':
 
+    # Argument parsing
     derryck = logging.getLogger('Derryck')
     derryck.addHandler(logging.StreamHandler())
     
-
     desc_str = """Removes all but specified courses from Derryck-issued
                   timetables, doing so on a row-by-row basis. Cells in a given
                   row bounded by CUT and END_CUT will be ignored. Requires
                   openpyxl."""
-    ep_str = 'Example: "python <path> 4 -c GR QO" removes all but GR, QO.'
+    ep_str = 'Example: "python <path_to_timetable> 4 <path_to_template> -c GR QO" removes all but GR, QO.'
     parser = argparse.ArgumentParser(description=desc_str, epilog=ep_str)
     parser.add_argument('path', help='Path to timetable.')
     parser.add_argument('year', type=int, help='Year of study.')
+    parser.add_argument('template', help='Path to applescript template.')
     parser.add_argument('--courses', '-c', metavar='C', nargs='+',
                         help='Relevant courses (abbrevs).')
     parser.add_argument('--verbose', '-v', action='store_true')
@@ -206,5 +218,18 @@ if __name__ == '__main__':
         log_level = logging.DEBUG
     derryck.setLevel(log_level)
 
-    course_list = fuck_timetable(args)
-    move_to_iCal(course_list, args)
+    # Obtain relevant Excel sheet
+    sheet_number = args.year
+    if sheet_number == 4:
+        sheet_number = 3
+
+    timetable = openpyxl.load_workbook(os.path.abspath(args.path))
+    year_sheet = timetable[timetable.get_sheet_names()[sheet_number-1]]
+
+    # Obtain applescript template
+    env = Environment(loader=FileSystemLoader('.'))
+    template = env.get_template(args.template)
+    derryck.info('Loading applescript template {0}.'.format(template.filename))
+
+    course_list = fuck_timetable(year_sheet, args)
+    move_to_iCal(year_sheet, template, course_list, args)
